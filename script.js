@@ -1,25 +1,184 @@
-const svg = d3.select("#chart");
-const margin = { top: 30, right: 30, bottom: 60, left: 60 };
-const width = 1200 - margin.left - margin.right;
+// script.js
+
+// Scrollama setup
+/*
+const scroller = scrollama();
+
+// Dimensions
+const margin = { top: 30, right: 50, bottom: 50, left: 50 };
+const width = 960 - margin.left - margin.right;
 const height = 500 - margin.top - margin.bottom;
 
-const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
-const x = d3.scaleLinear().range([0, width]);
-const y = d3.scaleLinear().range([height, 0]);
-const color = d3.scaleOrdinal(d3.schemeCategory10);
+// Create SVG container
+const svg = d3.select("#graphic")
+  .append("svg")
+  .attr("width", width + margin.left + margin.right)
+  .attr("height", height + margin.top + margin.bottom)
+  .append("g")
+  .attr("transform", `translate(${margin.left},${margin.top})`);
 
-let currentType = "temp";
-let dataReady = {};
-let zoomState = d3.zoomIdentity;
+// Time scales
+const xScale = d3.scaleLinear().range([0, width]).domain([0, 1440]); // minutes in a day
+const yScaleActivity = d3.scaleLinear().range([height, 0]).domain([0, 100]); // activity 0-100
+const yScaleTemp = d3.scaleLinear().range([height, 0]).domain([35, 40]); // temp in °C approx
 
-// Load and process the data
+// Line generators
+const lineActivity = d3.line()
+  .x(d => xScale(d.minute))
+  .y(d => yScaleActivity(d.value))
+  .curve(d3.curveMonotoneX);
+
+const lineTemp = d3.line()
+  .x(d => xScale(d.minute))
+  .y(d => yScaleTemp(d.value))
+  .curve(d3.curveMonotoneX);
+
+let dataReady = null;
+
+// Calculate average helper (assumes each CSV has 'minute' and multiple mouse columns)
+function calculateAverage(data) {
+  // Data is array of objects, keys: minute, mouse1, mouse2, ...
+  // For each minute, average across mouse columns
+  return data.map(row => {
+    let sum = 0;
+    let count = 0;
+    for (const key in row) {
+      if (key !== "minute") {
+        sum += +row[key];
+        count++;
+      }
+    }
+    return { minute: row.minute, value: sum / count };
+  });
+}
+
+// Draw initial axes
+svg.append("g")
+  .attr("class", "x-axis")
+  .attr("transform", `translate(0,${height})`)
+  .call(d3.axisBottom(xScale).ticks(12).tickFormat(d => `${Math.floor(d / 60)}h`));
+
+svg.append("g")
+  .attr("class", "y-axis-left")
+  .call(d3.axisLeft(yScaleActivity));
+
+function updateAxes(type) {
+  if (type === "activity") {
+    svg.select(".y-axis-left")
+      .transition()
+      .duration(500)
+      .call(d3.axisLeft(yScaleActivity));
+    svg.select(".y-axis-right").remove();
+  } else if (type === "temperature") {
+    svg.select(".y-axis-left").remove();
+    if (svg.select(".y-axis-right").empty()) {
+      svg.append("g")
+        .attr("class", "y-axis-right")
+        .attr("transform", `translate(${width},0)`)
+        .call(d3.axisRight(yScaleTemp));
+    }
+  }
+}
+
+function drawLine(data, lineClass, lineGen, stroke, widthStroke) {
+  let line = svg.select(`.${lineClass}`);
+  if (line.empty()) {
+    line = svg.append("path")
+      .attr("class", lineClass)
+      .attr("fill", "none")
+      .attr("stroke", stroke)
+      .attr("stroke-width", widthStroke)
+      .attr("d", lineGen(data));
+  } else {
+    line.transition()
+      .duration(1000)
+      .attr("stroke", stroke)
+      .attr("stroke-width", widthStroke)
+      .attr("d", lineGen(data));
+  }
+}
+
+// Scrollama step handler
+function handleStepEnter(response) {
+  const index = response.index;
+  d3.selectAll(".step").classed("is-active", (d, i) => i === index);
+
+  if (!dataReady) return;
+
+  switch (index) {
+    case 0:
+      // Intro: Light background, no data plot yet
+      d3.select("#graphic").style("background", "linear-gradient(to bottom, #e0eafc, #cfdef3)");
+      svg.selectAll("path").remove();
+      svg.select(".y-axis-right").remove();
+      updateAxes("activity");
+      break;
+    case 1:
+      // Lights out: activity rises (male average)
+      d3.select("#graphic").style("background", "linear-gradient(to bottom, #1a1a2e, #0f3460)");
+      drawLine(dataReady.act.male, "line-activity", lineActivity, "#0f3460", 3);
+      svg.select(".y-axis-right").remove();
+      updateAxes("activity");
+      break;
+    case 2:
+      // Circadian clock (placeholder)
+      // For simplicity, keep activity line and maybe highlight
+      drawLine(dataReady.act.male, "line-activity", lineActivity, "#0f3460", 3);
+      break;
+    case 3:
+      // Temperature rises: overlay temp line male
+      drawLine(dataReady.act.male, "line-activity", lineActivity, "#0f3460", 3);
+      drawLine(dataReady.temp.male, "line-temp", lineTemp, "#f53855", 2);
+      updateAxes("temperature");
+      break;
+    case 4:
+      // Female behavior day 2 - female activity and temp
+      drawLine(dataReady.act.female, "line-activity", lineActivity, "#f53855", 3);
+      drawLine(dataReady.temp.female, "line-temp", lineTemp, "#ff6f91", 2);
+      updateAxes("temperature");
+      break;
+    case 5:
+      // Estrus cycle animation placeholder (not implemented)
+      break;
+    case 6:
+      // Compare genders - both lines
+      drawLine(dataReady.act.male, "line-activity-male", lineActivity, "#0f3460", 3);
+      drawLine(dataReady.act.female, "line-activity-female", lineActivity, "#f53855", 3);
+      svg.select(".line-temp").remove();
+      updateAxes("activity");
+
+      // Legend
+      svg.selectAll(".legend").remove();
+      const legend = svg.append("g")
+        .attr("class", "legend")
+        .attr("transform", "translate(20,20)");
+
+      legend.append("rect").attr("width", 15).attr("height", 15).attr("fill", "#0f3460");
+      legend.append("text").attr("x", 20).attr("y", 12).text("Male").attr("fill", "#0f3460").style("font-weight", "600");
+
+      legend.append("rect").attr("width", 15).attr("height", 15).attr("fill", "#f53855").attr("transform", "translate(100,0)");
+      legend.append("text").attr("x", 120).attr("y", 12).text("Female").attr("fill", "#f53855").style("font-weight", "600");
+      break;
+    case 7:
+      // Interactive mouse choice (not implemented here)
+      break;
+    case 8:
+      // Summary insight, reset background
+      d3.select("#graphic").style("background", "linear-gradient(to bottom, #e0eafc, #cfdef3)");
+      svg.selectAll("path").remove();
+      svg.select(".y-axis-right").remove();
+      updateAxes("activity");
+      break;
+  }
+}
+
+// Load and process data
 Promise.all([
   d3.csv("data/MaleTemp.csv", d3.autoType),
   d3.csv("data/FemTemp.csv", d3.autoType),
   d3.csv("data/MaleAct.csv", d3.autoType),
   d3.csv("data/FemAct.csv", d3.autoType)
 ]).then(([maleTemp, femTemp, maleAct, femAct]) => {
-  // Calculate averages
   dataReady = {
     temp: {
       male: calculateAverage(maleTemp),
@@ -30,297 +189,211 @@ Promise.all([
       female: calculateAverage(femAct)
     }
   };
-  updateChart();
+  // Setup Scrollama after data is ready
+  initScrollama();
 });
 
-// Function to calculate average of all columns for each row
-function calculateAverage(data) {
-  if (data.length === 0) return [];
-  
-  // Calculate average for each row (timepoint)
-  const averages = data.map((row, timeIndex) => {
-    // Get all values from this row (excluding any non-numeric values)
-    const values = Object.entries(row)
-      .filter(([key, val]) => !isNaN(val) && key !== "time")
-      .map(([key, val]) => val);
-    
-    if (values.length === 0) return { time: timeIndex, value: NaN };
-    
-    // Calculate average
-    const sum = values.reduce((acc, val) => acc + val, 0);
-    const avg = sum / values.length;
-    
-    return { time: timeIndex, value: avg };
-  });
-  
-  // Return the averages in a format compatible with the visualization
-  return [{ 
-    id: "average", 
-    values: averages.filter(d => !isNaN(d.value))
-  }];
+// Setup Scrollama and window resize handler
+function initScrollama() {
+  scroller
+    .setup({
+      step: ".step",
+      offset: 0.5,
+      debug: false
+    })
+    .onStepEnter(handleStepEnter);
+
+  window.addEventListener("resize", scroller.resize);
 }
+*/
+// Globals
+const svg = d3.select("#chart");
+const width = 900;
+const height = 400;
+const margin = { top: 30, right: 30, bottom: 50, left: 60 };
 
-function drawDarkCycles(timeMode, timeStart, timeEnd, zoomX) {
-  const darkCycles = g.append("g")
-    .attr("class", "dark-cycles")
-    .attr("clip-path", "url(#clip)");
+let dataReady = null;
+let selectedMouse = null;
 
-  if (timeMode === "day") {
-    const darkCycleDuration = 720; // 12 hours in minutes
-    const cycleDuration = 1440; // 24 hours in minutes
-    
-    // Calculate how many full cycles we have
-    const numCycles = Math.ceil(timeEnd / cycleDuration);
-    
-    for (let i = 0; i < numCycles; i++) {
-      const cycleStart = i * cycleDuration;
-      const darkStart = cycleStart;
-      const darkEnd = darkStart + darkCycleDuration;
-      
-      // Only draw if within our time range
-      if (darkEnd > timeStart && darkStart < timeEnd) {
-        const drawStart = Math.max(darkStart, timeStart);
-        const drawEnd = Math.min(darkEnd, timeEnd);
-        
-        darkCycles.append("rect")
-          .attr("x", zoomX(drawStart))
-          .attr("y", 0)
-          .attr("width", zoomX(drawEnd) - zoomX(drawStart))
-          .attr("height", height)
-          .attr("fill", "#f0f0f0")
-          .attr("opacity", 0.4);
+// Scales
+const xScale = d3.scaleLinear().range([margin.left, width - margin.right]);
+const yScale = d3.scaleLinear().range([height - margin.bottom, margin.top]);
+
+// Line generators
+const lineTemp = d3.line()
+  .x((d, i) => xScale(i))
+  .y(d => yScale(d.temp));
+
+const lineAct = d3.line()
+  .x((d, i) => xScale(i))
+  .y(d => yScale(d.act));
+
+// Axes
+const xAxis = svg.append("g")
+  .attr("transform", `translate(0,${height - margin.bottom})`);
+
+const yAxis = svg.append("g")
+  .attr("transform", `translate(${margin.left},0)`);
+
+svg.append("text")
+  .attr("id", "yLabel")
+  .attr("transform", `translate(20, ${height / 2}) rotate(-90)`)
+  .attr("text-anchor", "middle")
+  .attr("font-weight", "bold")
+  .attr("fill", "#fff")
+  .text("");
+
+// Path elements for lines
+const pathTemp = svg.append("path")
+  .attr("fill", "none")
+  .attr("stroke", "#FF69B4") // pink for temp
+  .attr("stroke-width", 2);
+
+const pathAct = svg.append("path")
+  .attr("fill", "none")
+  .attr("stroke", "#1E90FF") // blue for activity
+  .attr("stroke-width", 2)
+  .attr("opacity", 0.7);
+
+// Function to calculate averages (over all mice in dataset)
+function calculateAverage(data) {
+  // data = array of objects (rows) with mouse columns
+  const avg = [];
+  data.forEach(row => {
+    let sum = 0;
+    let count = 0;
+    for (const key in row) {
+      if (key !== "minute" && key !== "time") {
+        sum += +row[key];
+        count++;
       }
     }
-  }
-  return darkCycles;
+    avg.push(sum / count);
+  });
+  return avg;
 }
 
+// Function to extract individual mouse data as array of values
+function getMouseData(data, mouseID) {
+  return data.map(row => +row[mouseID]);
+}
+
+// Update chart to show averages or selected mouse
 function updateChart() {
-  g.selectAll("*").remove();
-  svg.select("defs")?.remove();
+  if (!dataReady) return;
 
-  const maleChecked = document.getElementById("toggleMale").checked;
-  const femaleChecked = document.getElementById("toggleFemale").checked;
-  const timeRange = document.getElementById("timeRange").value.trim();
-  const timeMode = document.getElementById("timeMode").value;
+  let tempData, actData;
 
-  let data = [];
-  if (maleChecked) data = data.concat(dataReady[currentType].male.map(d => ({ ...d, gender: "male" })));
-  if (femaleChecked) data = data.concat(dataReady[currentType].female.map(d => ({ ...d, gender: "female" })));
-
-  // Set hard max time limits
-  const maxDayTime = 14 * 1440;
-  const maxSecTime = 20000;
-
-  let timeStart = 0;
-  let timeEnd = timeMode === "sec" ? maxSecTime : maxDayTime;
-
-  if (timeRange && timeRange.includes("-")) {
-    const [start, end] = timeRange.split("-").map(d => parseInt(d));
-    if (!isNaN(start) && !isNaN(end)) {
-      timeStart = Math.max(0, start);
-      timeEnd = Math.min(end, timeMode === "sec" ? maxSecTime : maxDayTime);
+  if (selectedMouse) {
+    // Find gender by mouseID prefix
+    if (selectedMouse.startsWith("M")) {
+      tempData = getMouseData(dataReady.temp.maleRaw, selectedMouse);
+      actData = getMouseData(dataReady.act.maleRaw, selectedMouse);
+    } else if (selectedMouse.startsWith("F")) {
+      tempData = getMouseData(dataReady.temp.femaleRaw, selectedMouse);
+      actData = getMouseData(dataReady.act.femaleRaw, selectedMouse);
+    } else {
+      console.warn("Unrecognized mouse ID:", selectedMouse);
+      return;
     }
+  } else {
+    // Use averages
+    tempData = dataReady.temp.maleAvg.map((v, i) => (v + dataReady.temp.femaleAvg[i]) / 2);
+    actData = dataReady.act.maleAvg.map((v, i) => (v + dataReady.act.femaleAvg[i]) / 2);
   }
 
-  // Filter by time range
-  const filteredData = data.map(series => ({
-    ...series,
-    values: series.values.filter(v => v.time >= timeStart && v.time <= timeEnd)
-  }));
+  // Compose data array for lines [{temp, act}, ...]
+  const combined = tempData.map((t, i) => ({ temp: t, act: actData[i] }));
 
-  // Get min/max for y-axis
-  const allValues = filteredData.flatMap(d => d.values.map(p => p.value));
-  const yMin = d3.min(allValues);
-  const yMax = d3.max(allValues);
+  // Update scales
+  xScale.domain([0, combined.length - 1]);
+  yScale.domain([0, d3.max(combined, d => Math.max(d.temp, d.act)) * 1.1]);
 
-  y.domain([Math.floor(yMin), Math.ceil(yMax)]);
-  x.domain([timeStart, timeEnd]);
+  xAxis.call(d3.axisBottom(xScale).ticks(10).tickFormat(d => `${Math.floor(d/60)}h`));
+  yAxis.call(d3.axisLeft(yScale));
 
-  svg.append("defs").append("clipPath")
-    .attr("id", "clip")
-    .append("rect")
-    .attr("width", width)
-    .attr("height", height);
+  // Update lines
+  pathTemp.datum(combined)
+    .transition()
+    .duration(800)
+    .attr("d", lineTemp)
+    .attr("stroke", "#FF69B4");
 
-  const lineGroup = g.append("g").attr("clip-path", "url(#clip)");
+  pathAct.datum(combined)
+    .transition()
+    .duration(800)
+    .attr("d", lineAct)
+    .attr("stroke", "#1E90FF");
 
-  // Y-axis with appropriate ticks
-  const yTicks = currentType === "act"
-    ? d3.range(Math.floor(yMin), Math.ceil(yMax) + 10, 10)
-    : d3.range(Math.floor(yMin), Math.ceil(yMax) + 1, 1);
-  
-  g.append("g")
-    .call(d3.axisLeft(y).tickValues(yTicks));
+  // Update label
+  svg.select("#yLabel").text(selectedMouse ? `Mouse ${selectedMouse} Data` : "Average Temp & Activity");
+}
 
-  const line = d3.line()
-    .x(d => x(d.time))
-    .y(d => y(d.value))
-    .defined(d => d.value !== null && !isNaN(d.value));
+// Scrollama setup
+const scroller = scrollama();
 
-    // Draw dark cycles using the current zoom state
-    const zoomX = zoomState.rescaleX(x) || x;
-    drawDarkCycles(timeMode, timeStart, timeEnd, zoomX);
+scroller
+  .setup({
+    step: ".step",
+    offset: 0.5,
+    debug: false,
+  })
+  .onStepEnter(({ index, element }) => {
+    d3.selectAll(".step").classed("is-active", (d, i) => i === index);
 
-    // Draw lines
-  const mouseLine = lineGroup.selectAll(".mouse-line")
-    .data(filteredData)
-    .join("path")
-    .attr("class", "mouse-line")
-    .attr("fill", "none")
-    .attr("stroke", d => d.gender === "male" ? "#1f77b4" : "#e377c2")
-    .attr("stroke-width", 2.5)
-    .attr("opacity", 0.7)
-    .attr("d", d => line(d.values));
-
-  // Add tooltip
-  const tooltip = d3.select("body")
-    .append("div")
-    .attr("class", "tooltip")
-    .style("opacity", 0);
-
-  // Line hover effects
-  mouseLine
-    .on("mouseover", function (event, d) {
-      d3.select(this).attr("stroke-width", 4).attr("opacity", 1)
-      tooltip.style("opacity", 1)
-        .html(`${d.gender === "male" ? "Male" : "Female"} Average ${currentType === "temp" ? "Temperature" : "Activity"}`);
-    })
-    .on("mouseout", function (event, d) {
-      d3.select(this)
-        .attr("stroke-width", 2.5)
-        .attr("stroke", d.gender === "male" ? "#1f77b4" : "#e377c2").attr("opacity", 0.7);
-      tooltip.style("opacity", 0);
-    });
-
-  svg.on("mousemove", function (event) {
-    tooltip.style("left", (event.pageX + 10) + "px")
-      .style("top", (event.pageY - 20) + "px");
+    // Logic to update chart based on scroll step
+    if (index === 7) {
+      d3.select("#mouse-picker-container").style("display", "block");
+    } else {
+      d3.select("#mouse-picker-container").style("display", "none");
+      selectedMouse = null;
+      updateChart();
+    }
   });
 
-  // Format X-axis ticks
-  const formatTicks = d => {
-    if (timeMode === "day") return `Day ${Math.floor(d / 1440) + 1}`;
-    return `${d}`;
+window.addEventListener("resize", scroller.resize);
+
+// Load and process the data
+Promise.all([
+  d3.csv("data/MaleTemp.csv", d3.autoType),
+  d3.csv("data/FemTemp.csv", d3.autoType),
+  d3.csv("data/MaleAct.csv", d3.autoType),
+  d3.csv("data/FemAct.csv", d3.autoType)
+]).then(([maleTemp, femTemp, maleAct, femAct]) => {
+  // Store raw data for mouse-specific selection
+  dataReady = {
+    temp: {
+      maleRaw: maleTemp,
+      femaleRaw: femTemp,
+      maleAvg: calculateAverage(maleTemp),
+      femaleAvg: calculateAverage(femTemp)
+    },
+    act: {
+      maleRaw: maleAct,
+      femaleRaw: femAct,
+      maleAvg: calculateAverage(maleAct),
+      femaleAvg: calculateAverage(femAct)
+    }
   };
 
-  // Add X-axis
-  const bottomXAxis = g.append("g")
-    .attr("transform", `translate(0,${height})`)
-    .call(d3.axisBottom(zoomX).ticks(14).tickFormat(formatTicks))
-    .attr("class", "x-axis-bottom");
+  // Fill mouse picker dropdown
+  const select = d3.select("#mousePicker");
+  const maleMouseIDs = Object.keys(maleTemp[0]).filter(k => k !== "minute" && k !== "time");
+  const femaleMouseIDs = Object.keys(femTemp[0]).filter(k => k !== "minute" && k !== "time");
 
-  // Add axis labels
-  g.append("text")
-    .attr("x", width / 2)
-    .attr("y", height + 40)
-    .attr("text-anchor", "middle")
-    .text(timeMode === "day" ? "Time (Days)" : "Time (Seconds)");
+  const allMouseIDs = maleMouseIDs.concat(femaleMouseIDs);
 
-  g.append("text")
-    .attr("transform", "rotate(-90)")
-    .attr("y", -40)
-    .attr("x", -height / 2)
-    .attr("text-anchor", "middle")
-    .text(currentType === "temp" ? "Average Temperature" : "Average Activity");
+  allMouseIDs.forEach(id => {
+    select.append("option").attr("value", id).text(id);
+  });
 
-  // Add legend
-  const legend = g.append("g")
-    .attr("class", "legend")
-    .attr("transform", `translate(${width - 100}, 20)`);
+  select.on("change", function () {
+    selectedMouse = this.value || null;
+    updateChart();
+  });
 
-  if (maleChecked) {
-    legend.append("line")
-      .attr("x1", 0)
-      .attr("y1", 0)
-      .attr("x2", 20)
-      .attr("y2", 0)
-      .attr("stroke", "#1f77b4")
-      .attr("stroke-width", 2.5);
-    
-    legend.append("text")
-      .attr("x", 25)
-      .attr("y", 4)
-      .text("Male Avg");
-  }
-
-  if (femaleChecked) {
-    legend.append("line")
-      .attr("x1", 0)
-      .attr("y1", 20)
-      .attr("x2", 20)
-      .attr("y2", 20)
-      .attr("stroke", "#e377c2")
-      .attr("stroke-width", 2.5);
-    
-    legend.append("text")
-      .attr("x", 25)
-      .attr("y", 24)
-      .text("Female Avg");
-  }
-
-  // Add dark cycle legend if in day mode
-  if (timeMode === "day") {
-    legend.append("rect")
-      .attr("x", 0)
-      .attr("y", 40)
-      .attr("width", 20)
-      .attr("height", 10)
-      .attr("fill", "#f0f0f0")
-      .attr("opacity", 0.5);
-    
-    legend.append("text")
-      .attr("x", 25)
-      .attr("y", 48)
-      .text("Dark Cycle");
-  }
-
-  // Zoom functionality
-  const zoom = d3.zoom()
-    .scaleExtent([1, 10])
-    .translateExtent([[0, 0], [width, height]])
-    .extent([[0, 0], [width, height]])
-    .on("zoom", function (event) {
-      zoomState = event.transform;
-      const newX = event.transform.rescaleX(x);
-
-      // Clamp the zoomed domain
-      const [min, max] = newX.domain();
-      const domainMax = timeMode === "sec" ? maxSecTime : maxDayTime;
-
-      const clampedX = d3.scaleLinear()
-        .domain([
-          Math.max(0, min),
-          Math.min(domainMax, max)
-        ])
-        .range(newX.range());
-
-      // Update axes
-      bottomXAxis.call(d3.axisBottom(clampedX).ticks(14).tickFormat(formatTicks));
-
-      // Update dark cycles
-      g.selectAll(".dark-cycles").remove();
-      drawDarkCycles(timeMode, timeStart, timeEnd, clampedX);
-
-      // Update lines
-      mouseLine.attr("d", d => {
-        const zoomedLine = d3.line()
-          .x(p => clampedX(p.time))
-          .y(p => y(p.value))
-          .defined(p => p.value !== null && !isNaN(p.value));
-        return zoomedLine(d.values);
-      });
-    });
-
-  svg.call(zoom);
-}
-
-// Event listeners
-document.getElementById("toggleMale").addEventListener("change", updateChart);
-document.getElementById("toggleFemale").addEventListener("change", updateChart);
-document.getElementById("dataType").addEventListener("change", function () {
-  currentType = this.value;
+  // Initial chart draw with averages
   updateChart();
+}).catch(err => {
+  console.error("Error loading data:", err);
 });
-document.getElementById("timeRange").addEventListener("input", updateChart);
-document.getElementById("timeMode").addEventListener("change", updateChart);
